@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nano Input Monitor</title>
+<style>
+  :root {
+    --bg: #f6f6f4; --card: #ffffff; --ink: #1d1d1b; --muted: #77776f;
+    --line: #e2e2dc; --on: #1f9d55; --on-soft: #d6f2e1; --accent: #2f6fdb;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #151514; --card: #1f1f1d; --ink: #ededea; --muted: #8e8e86;
+            --line: #33332f; --on: #3ecf7a; --on-soft: #173a26; --accent: #6b9cff; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font: 15px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  main { max-width: 720px; margin: 0 auto; padding: 24px 16px; }
+  header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 20px; }
+  h1 { font-size: 20px; margin: 0; }
+  #status { color: var(--muted); font-size: 13px; }
+  button#connect { background: var(--accent); color: #fff; border: 0; border-radius: 8px;
+                   padding: 9px 16px; font: inherit; font-weight: 600; cursor: pointer; }
+  button#connect:disabled { opacity: .5; cursor: default; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
+  .card h2 { font-size: 13px; font-weight: 600; color: var(--muted); margin: 0 0 12px;
+             text-transform: uppercase; letter-spacing: .04em; }
+  .btn { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-top: 1px solid var(--line); }
+  .btn:first-of-type { border-top: 0; }
+  .led { width: 22px; height: 22px; border-radius: 50%; border: 2px solid var(--line);
+         transition: background .05s, border-color .05s; flex: none; }
+  .btn.pressed .led { background: var(--on); border-color: var(--on); box-shadow: 0 0 0 5px var(--on-soft); }
+  .btn .name { flex: 1; }
+  .btn .name small { display: block; color: var(--muted); font-size: 12px; }
+  .btn .state { font-weight: 600; font-size: 13px; color: var(--muted); min-width: 64px; text-align: right; }
+  .btn.pressed .state { color: var(--on); }
+  .bigcount { font-size: 28px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .count { font-variant-numeric: tabular-nums; color: var(--muted); font-size: 12px; }
+  #pad { position: relative; width: 200px; height: 200px; margin: 4px auto 12px;
+         border-radius: 50%; border: 2px solid var(--line); background:
+         linear-gradient(var(--line), var(--line)) center/1px 100% no-repeat,
+         linear-gradient(var(--line), var(--line)) center/100% 1px no-repeat; }
+  #dot { position: absolute; width: 26px; height: 26px; border-radius: 50%; background: var(--accent);
+         left: 50%; top: 50%; transform: translate(-50%, -50%); }
+  #pad.pressed #dot { background: var(--on); box-shadow: 0 0 0 6px var(--on-soft); }
+  #knob { position: relative; width: 120px; height: 120px; margin: 4px auto 12px; border-radius: 50%;
+          border: 2px solid var(--line); transition: transform .08s; }
+  #mark { position: absolute; left: 50%; top: 8px; width: 6px; height: 28px; margin-left: -3px;
+          border-radius: 3px; background: var(--accent); }
+  .xy { display: flex; justify-content: center; gap: 20px; font-variant-numeric: tabular-nums; color: var(--muted); font-size: 13px; }
+  .note { color: var(--muted); font-size: 13px; margin-top: 16px; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <div>
+      <h1>Nano Input Monitor</h1>
+      <div id="status">Not connected</div>
+    </div>
+    <button id="connect">Connect</button>
+  </header>
+
+  <div class="grid">
+    <section class="card">
+      <h2>Buttons</h2>
+      <div class="btn" id="b-b1"><span class="led"></span>
+        <span class="name">Button 1<small>D2 · next slide / volume up</small></span>
+        <span class="bigcount" id="b1-count">0</span>
+        <span class="state">released</span></div>
+      <div class="btn" id="b-b2"><span class="led"></span>
+        <span class="name">Button 2<small>D3 · previous slide / volume down</small></span>
+        <span class="bigcount" id="b2-count">0</span>
+        <span class="state">released</span></div>
+      <div class="btn" id="b-sw"><span class="led"></span>
+        <span class="name">Joystick click<small>SW · D4</small></span>
+        <span class="bigcount" id="sw-count">0</span>
+        <span class="state">released</span></div>
+    </section>
+
+    <section class="card">
+      <h2>Joystick <small style="text-transform:none">(X A0 · Y A1)</small></h2>
+      <div id="pad"><div id="dot"></div></div>
+      <div class="xy"><span>X <b id="x">–</b></span><span>Y <b id="y">–</b></span></div>
+    </section>
+
+    <section class="card">
+      <h2>Rotary encoder <small style="text-transform:none">(CLK D5 · DT D6)</small></h2>
+      <div id="knob"><div id="mark"></div></div>
+      <div class="xy"><span>Position <b id="enc">–</b></span></div>
+      <div class="btn" id="b-eb"><span class="led"></span>
+        <span class="name">Knob push<small>SW · D7</small></span>
+        <span class="bigcount" id="eb-count">0</span>
+        <span class="state">released</span></div>
+    </section>
+  </div>
+
+  <p class="note">Needs Chrome or Edge. Close any other program using the port (arduino-cli upload, controller.py, the Arduino Serial Monitor) before connecting.</p>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+
+if (!("serial" in navigator)) {
+  $("status").textContent = "This browser has no Web Serial. Open the page in Chrome or Edge.";
+  $("connect").disabled = true;
+}
+
+$("connect").onclick = async () => {
+  try {
+    const port = await navigator.serial.requestPort();
+    await port.open({ baudRate: 115200 });
+    // Opening the port can pull the board into reset/bootloader; release both lines.
+    await port.setSignals({ dataTerminalReady: false, requestToSend: false });
+    $("connect").disabled = true;
+    $("status").textContent = "Connected — waiting for data…";
+    await readLoop(port);
+  } catch (e) {
+    $("status").textContent = "Error: " + e.message;
+    $("connect").disabled = false;
+  }
+};
+
+async function readLoop(port) {
+  const reader = port.readable.pipeThrough(new TextDecoderStream()).getReader();
+  let buf = "";
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += value;
+      const lines = buf.split("\n");
+      buf = lines.pop();
+      for (const line of lines) {
+        try { render(JSON.parse(line)); } catch { /* boot messages, partial lines */ }
+      }
+    }
+  } finally {
+    $("status").textContent = "Disconnected";
+    $("connect").disabled = false;
+  }
+}
+
+function render(d) {
+  $("status").textContent = "Connected · live";
+  // Press counts come from the Nano (debounced, counted when a button goes down).
+  for (const k of ["b1", "b2", "sw", "eb"]) {
+    const el = $("b-" + k);
+    el.classList.toggle("pressed", !!d[k]);
+    el.querySelector(".state").textContent = d[k] ? "PRESSED" : "released";
+    $(k + "-count").textContent = d[k + "n"] ?? 0;
+  }
+  $("pad").classList.toggle("pressed", !!d.sw);
+  // 20 clicks per turn on a KY-040 → 18° per click
+  $("enc").textContent = d.enc ?? 0;
+  $("knob").style.transform = `rotate(${(d.enc ?? 0) * 18}deg)`;
+  $("x").textContent = d.x;
+  $("y").textContent = d.y;
+  // 0..max → -1..1, dot moves within the circle (Nano max 1023)
+  const half = (d.max ?? 1023) / 2;
+  const nx = d.x / half - 1, ny = d.y / half - 1;
+  $("dot").style.left = 50 + nx * 42 + "%";
+  $("dot").style.top = 50 + ny * 42 + "%";
+}
+</script>
+</body>
+</html>

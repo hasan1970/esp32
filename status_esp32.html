@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ESP32 Input Monitor</title>
+<style>
+  :root {
+    --bg: #f6f6f4; --card: #ffffff; --ink: #1d1d1b; --muted: #77776f;
+    --line: #e2e2dc; --on: #1f9d55; --on-soft: #d6f2e1; --accent: #2f6fdb;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #151514; --card: #1f1f1d; --ink: #ededea; --muted: #8e8e86;
+            --line: #33332f; --on: #3ecf7a; --on-soft: #173a26; --accent: #6b9cff; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font: 15px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  main { max-width: 720px; margin: 0 auto; padding: 24px 16px; }
+  header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 20px; }
+  h1 { font-size: 20px; margin: 0; }
+  #status { color: var(--muted); font-size: 13px; }
+  button#connect { background: var(--accent); color: #fff; border: 0; border-radius: 8px;
+                   padding: 9px 16px; font: inherit; font-weight: 600; cursor: pointer; }
+  button#connect:disabled { opacity: .5; cursor: default; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
+  .card h2 { font-size: 13px; font-weight: 600; color: var(--muted); margin: 0 0 12px;
+             text-transform: uppercase; letter-spacing: .04em; }
+  .btn { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-top: 1px solid var(--line); }
+  .btn:first-of-type { border-top: 0; }
+  .led { width: 22px; height: 22px; border-radius: 50%; border: 2px solid var(--line);
+         transition: background .05s, border-color .05s; flex: none; }
+  .btn.pressed .led { background: var(--on); border-color: var(--on); box-shadow: 0 0 0 5px var(--on-soft); }
+  .btn .name { flex: 1; }
+  .btn .name small { display: block; color: var(--muted); font-size: 12px; }
+  .btn .state { font-weight: 600; font-size: 13px; color: var(--muted); min-width: 64px; text-align: right; }
+  .btn.pressed .state { color: var(--on); }
+  .count { font-variant-numeric: tabular-nums; color: var(--muted); font-size: 12px; }
+  #pad { position: relative; width: 200px; height: 200px; margin: 4px auto 12px;
+         border-radius: 50%; border: 2px solid var(--line); background:
+         linear-gradient(var(--line), var(--line)) center/1px 100% no-repeat,
+         linear-gradient(var(--line), var(--line)) center/100% 1px no-repeat; }
+  #dot { position: absolute; width: 26px; height: 26px; border-radius: 50%; background: var(--accent);
+         left: 50%; top: 50%; transform: translate(-50%, -50%); }
+  #pad.pressed #dot { background: var(--on); box-shadow: 0 0 0 6px var(--on-soft); }
+  .xy { display: flex; justify-content: center; gap: 20px; font-variant-numeric: tabular-nums; color: var(--muted); font-size: 13px; }
+  .note { color: var(--muted); font-size: 13px; margin-top: 16px; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <div>
+      <h1>ESP32 Input Monitor</h1>
+      <div id="status">Not connected</div>
+    </div>
+    <button id="connect">Connect</button>
+  </header>
+
+  <div class="grid">
+    <section class="card">
+      <h2>Buttons</h2>
+      <div class="btn" id="b-boot"><span class="led"></span>
+        <span class="name">BOOT button<small>on-board · GPIO0</small></span>
+        <span class="state">released</span></div>
+      <div class="btn" id="b-ext"><span class="led"></span>
+        <span class="name">Breadboard button<small>GPIO27</small></span>
+        <span class="state">released</span></div>
+      <div class="btn" id="b-sw"><span class="led"></span>
+        <span class="name">Joystick click<small>SW · GPIO14</small></span>
+        <span class="state">released</span></div>
+      <div class="count" id="counts"></div>
+    </section>
+
+    <section class="card">
+      <h2>Joystick</h2>
+      <div id="pad"><div id="dot"></div></div>
+      <div class="xy"><span>X <b id="x">–</b></span><span>Y <b id="y">–</b></span></div>
+    </section>
+  </div>
+
+  <p class="note">Needs Chrome or Edge. Close any other program using the port (e.g. mpremote) before connecting.</p>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const presses = { boot: 0, ext: 0, sw: 0 };
+const last = { boot: 0, ext: 0, sw: 0 };
+
+if (!("serial" in navigator)) {
+  $("status").textContent = "This browser has no Web Serial. Open the page in Chrome or Edge.";
+  $("connect").disabled = true;
+}
+
+$("connect").onclick = async () => {
+  try {
+    const port = await navigator.serial.requestPort();
+    await port.open({ baudRate: 115200 });
+    // Opening the port can pull the board into reset/bootloader; release both lines.
+    await port.setSignals({ dataTerminalReady: false, requestToSend: false });
+    $("connect").disabled = true;
+    $("status").textContent = "Connected — waiting for data…";
+    await readLoop(port);
+  } catch (e) {
+    $("status").textContent = "Error: " + e.message;
+    $("connect").disabled = false;
+  }
+};
+
+async function readLoop(port) {
+  const reader = port.readable.pipeThrough(new TextDecoderStream()).getReader();
+  let buf = "";
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += value;
+      const lines = buf.split("\n");
+      buf = lines.pop();
+      for (const line of lines) {
+        try { render(JSON.parse(line)); } catch { /* boot messages, partial lines */ }
+      }
+    }
+  } finally {
+    $("status").textContent = "Disconnected";
+    $("connect").disabled = false;
+  }
+}
+
+function render(d) {
+  $("status").textContent = "Connected · live";
+  for (const k of ["boot", "ext", "sw"]) {
+    if (d[k] && !last[k]) presses[k]++;
+    last[k] = d[k];
+    const el = $("b-" + k);
+    el.classList.toggle("pressed", !!d[k]);
+    el.querySelector(".state").textContent = d[k] ? "PRESSED" : "released";
+  }
+  $("counts").textContent = `Presses — BOOT ${presses.boot} · Breadboard ${presses.ext} · Joystick ${presses.sw}`;
+  $("pad").classList.toggle("pressed", !!d.sw);
+  $("x").textContent = d.x;
+  $("y").textContent = d.y;
+  // 0–4095 → -1..1, dot moves within the circle
+  const nx = d.x / 2047.5 - 1, ny = d.y / 2047.5 - 1;
+  $("dot").style.left = 50 + nx * 42 + "%";
+  $("dot").style.top = 50 + ny * 42 + "%";
+}
+</script>
+</body>
+</html>
